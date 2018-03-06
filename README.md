@@ -135,7 +135,7 @@ Please see the pr2_mover() function in the /pr2_robot/project_template.py.
 
 And a last screenshot of PR2 picking up the smaller soap.
 
-![alt text][image14]
+![alt text][image15]
 
 The project can be extended in various ways such as: 
 
