@@ -1,106 +1,149 @@
-[![Udacity - Robotics NanoDegree Program](https://s3-us-west-1.amazonaws.com/udacity-robotics/Extra+Images/RoboND_flag.png)](https://www.udacity.com/robotics)
-# 3D Perception
-Before starting any work on this project, please complete all steps for [Exercise 1, 2 and 3](https://github.com/udacity/RoboND-Perception-Exercises). At the end of Exercise-3 you have a pipeline that can identify points that belong to a specific object.
+## Project: Perception Pick & Place
+### This is a write up for object recognition in a cluttered table top environment with an RGBD camera mounted on a PR2 robot. The project involves creating a perception pipeline with filtering, clustering, segmentation, object recognition using a Support Vector Machine and creating ROS messages for PR2 pick and place cycle.
 
-In this project, you must assimilate your work from previous exercises to successfully complete a tabletop pick and place operation using PR2.
+---
 
-The PR2 has been outfitted with an RGB-D sensor much like the one you used in previous exercises. This sensor however is a bit noisy, much like real sensors.
+See [Exercises](https://github.com/udacity/RoboND-Perception-Exercises) before setting up the project.
+Look at the [Project Repository](https://github.com/udacity/RoboND-Perception-Project) to set up the project. 
 
-Given the cluttered tabletop scenario, you must implement a perception pipeline using your work from Exercises 1,2 and 3 to identify target objects from a so-called “Pick-List” in that particular order, pick up those objects and place them in corresponding dropboxes.
+#### Steps to complete the project:
+1. Extracting features and training an SVM model for different objects (see `pick_list_*.yaml` in `/pr2_robot/config/` for the list of models to identify). 
+2. Writing a ROS node and subscribing to `/pr2/world/points` topic. This topic contains noisy point cloud data.
+3. Using filtering and RANSAC plane fitting to isolate the objects of interest from the rest of the scene.
+4. Applying Euclidean clustering to create separate clusters for individual items.
+5. Performing object recognition on these objects and assigning them labels (markers in RViz).
+6. Calculating the centroid (average in x, y and z) of the set of points belonging to that each object.
+7. Creating ROS messages containing the details of each object (name, pick_pose, etc.) and writing these messages out to `.yaml` files, one for each of the 3 scenarios (`test1-3.world` in `/pr2_robot/worlds/`).  [See the example `output.yaml` for details on what the output should look like.](https://github.com/udacity/RoboND-Perception-Project/blob/master/pr2_robot/config/output.yaml)  
+8. Correctly identifying 100% of objects from `pick_list_1.yaml` for `test1.world`, 80% of items from `pick_list_2.yaml` for `test2.world` and 75% of items from `pick_list_3.yaml` in `test3.world`.
 
-# Project Setup
-For this setup, catkin_ws is the name of active ROS Workspace, if your workspace name is different, change the commands accordingly
-If you do not have an active ROS workspace, you can create one by:
+[//]: # (Image References)
 
-```sh
-$ mkdir -p ~/catkin_ws/src
-$ cd ~/catkin_ws/
-$ catkin_make
-```
+[image1]: ./misc/Original_Pt_Cld.png
+[image2]: ./misc/Original_Cld_Top.png
 
-Now that you have a workspace, clone or download this repo into the src directory of your workspace:
-```sh
-$ cd ~/catkin_ws/src
-$ git clone https://github.com/udacity/RoboND-Perception-Project.git
-```
-### Note: If you have the Kinematics Pick and Place project in the same ROS Workspace as this project, please remove the 'gazebo_grasp_plugin' directory from the `RoboND-Perception-Project/` directory otherwise ignore this note. 
+[image3]: ./misc/Passthru_Cld_Top.png
+[image4]: ./misc/Stats_Cld.png
+[image5]: ./misc/Vox_Cld.png
+[image6]: ./misc/Table_Cld.png
+[image7]: ./misc/Object_Cld.png
 
-Now install missing dependencies using rosdep install:
-```sh
-$ cd ~/catkin_ws
-$ rosdep install --from-paths src --ignore-src --rosdistro=kinetic -y
-```
-Build the project:
-```sh
-$ cd ~/catkin_ws
-$ catkin_make
-```
-Add following to your .bashrc file
-```
-export GAZEBO_MODEL_PATH=~/catkin_ws/src/RoboND-Perception-Project/pr2_robot/models:$GAZEBO_MODEL_PATH
-```
+[image8]: ./misc/Cluster_Cld.png
 
-If you haven’t already, following line can be added to your .bashrc to auto-source all new terminals
-```
-source ~/catkin_ws/devel/setup.bash
-```
-
-To run the demo:
-```sh
-$ cd ~/catkin_ws/src/RoboND-Perception-Project/pr2_robot/scripts
-$ chmod u+x pr2_safe_spawner.sh
-$ ./pr2_safe_spawner.sh
-```
-![demo-1](https://user-images.githubusercontent.com/20687560/28748231-46b5b912-7467-11e7-8778-3095172b7b19.png)
+[image9]: ./misc/World3_Conf_Mat.png
+[image10]: ./misc/World2_Conf_Mat.png
+[image11]: ./misc/World1_Conf_Mat.png
 
 
+[image12]: ./misc/Detection_World3.png
+[image13]: ./misc/Detection_World2.png
+[image14]: ./misc/Detection_World1.png
+[image15]: ./misc/FinalShot.png
 
-Once Gazebo is up and running, make sure you see following in the gazebo world:
-- Robot
+## [Rubric](https://review.udacity.com/#!/rubrics/1067/view) Points
+### Here I will consider the rubric points individually and describe how I addressed each point in my implementation.   
 
-- Table arrangement
+---
 
-- Three target objects on the table
+### Filtering and RANSAC Implementation
 
-- Dropboxes on either sides of the robot
+The original pointcloud from the RGBD camera is quite noisy and the goal is to extract and recognize the desired objects on the tabletop. Publishing the pointcloud in the Rviz and looking at it through the perception pipeline is a good way to tune the pipeline. Please see the pcl_callback() function (lines 52-90) in the /pr2_robot/scripts/project_template.py. 
+
+![alt text][image1]
+
+Viewed from the top, it can be seen there is a lot of unnecessary pointcloud data. Therefore it's a good idea to crop the point cloud first in the z and y dimensions.
+
+![alt text][image2]
+
+Applying a Passthrough filter will reduce the point cloud size and will make working further less computationaly intensive.
+
+![alt text][image3]
+
+A statistical outlier filter then helps get rid of noisy data and we get a nice looking clean tabletop environment.
+
+![alt text][image4]
+
+The pointcloud data is still very dense, correctly applying voxel grid sampling reduces the data points while still keeping track of the original object shapes.
+
+![alt text][image5]
+ 
+And now we want to extract only the objects and remove the tabletop. RANSAC plane fitting can find different types of shapes in a given data. Since the table is a plane, we use RANSAC algorithm to extract table indices (inliers). The outliers will therefore be the objects. So here's our tabletop. 
+
+![alt text][image6]
+
+And the objects.
+
+![alt text][image7]
+
+### Clustering for Segmentation  
+
+As we have extracted the objects, we can now apply Euclidean Clustering to to group the objects into seperate clusters. Setting the cluster tolerance to 0.05, minimum cluster size to 50 and maximum cluster size to 2500 yeilds the desired results. Once again, visualising in Rviz gives a cool clustered pointcloud. Please see the pcl_callback() function (lines 92-118) in the /pr2_robot/scripts/project_template.py. 
+
+![alt text][image8]
+
+### Feature Extraction and SVM Training
+
+We can now extract the color histogram features as well as surface normal histogram features to extract features for each object in random orientations (I used 50 orientations each object, gathering more data can increase the model performance). It's also better to use HSV color space instead of RGB, then combine together the color and normal features and use those for training an SVM. I ended up using 32 color bins with range (0, 256) and 32 surface normals with range (-1,1). Since the objects vary a lot in color, a color bin size of 16 and 8 should also do a fine job. Please see capture_features.py, features.py, train_svm.py and the pcl_callback() function (lines 140-172) in the /pr2_robot/scripts/project_template.py. We use 5 fold cross validation to train the SVM. The overall Accuracy Scores for World3, World2 and World1 are 0.90, 0.88, and 0.93 respectively. 
+
+Confusion Matrices for World3: 
+
+![alt text][image9]
+
+Confusion Matrices for World2:
+
+![alt text][image10]
+
+Confusion Matrices for World1:
+
+![alt text][image11]
+
+Later during the object recognition test phase, the higher accuracy models didn't perform that well and were overftting with using larger feature vector sizes i.e more color and normal features. Collecting more random samples might help getting even better models specially for World3 where we have 8 different objects. 
 
 
-If any of these items are missing, please report as an issue on [the waffle board](https://waffle.io/udacity/robotics-nanodegree-issues).
+### Object Recognition
 
-In your RViz window, you should see the robot and a partial collision map displayed:
+Next we test our trained SVMs in the given world environments and publish our detected object list and object markers in the Rviz.
 
-![demo-2](https://user-images.githubusercontent.com/20687560/28748286-9f65680e-7468-11e7-83dc-f1a32380b89c.png)
+For world3, 7 out of 8 objects are being correctly classified hence an accuracy of 87.5. The 'book' has been misclassified as 'snacks'. Tuning the features and capturing more features would alleviate this problem.
 
-Proceed through the demo by pressing the ‘Next’ button on the RViz window when a prompt appears in your active terminal
+![alt text][image12]
 
-The demo ends when the robot has successfully picked and placed all objects into respective dropboxes (though sometimes the robot gets excited and throws objects across the room!)
+For world2, all objects are correctly classified i.e 5/5 with 100% accuracy.
 
-Close all active terminal windows using **ctrl+c** before restarting the demo.
+![alt text][image13]
 
-You can launch the project scenario like this:
-```sh
-$ roslaunch pr2_robot pick_place_project.launch
-```
-# Required Steps for a Passing Submission:
-1. Extract features and train an SVM model on new objects (see `pick_list_*.yaml` in `/pr2_robot/config/` for the list of models you'll be trying to identify). 
-2. Write a ROS node and subscribe to `/pr2/world/points` topic. This topic contains noisy point cloud data that you must work with.
-3. Use filtering and RANSAC plane fitting to isolate the objects of interest from the rest of the scene.
-4. Apply Euclidean clustering to create separate clusters for individual items.
-5. Perform object recognition on these objects and assign them labels (markers in RViz).
-6. Calculate the centroid (average in x, y and z) of the set of points belonging to that each object.
-7. Create ROS messages containing the details of each object (name, pick_pose, etc.) and write these messages out to `.yaml` files, one for each of the 3 scenarios (`test1-3.world` in `/pr2_robot/worlds/`).  See the example `output.yaml` for details on what the output should look like.  
-8. Submit a link to your GitHub repo for the project or the Python code for your perception pipeline and your output `.yaml` files (3 `.yaml` files, one for each test world).  You must have correctly identified 100% of objects from `pick_list_1.yaml` for `test1.world`, 80% of items from `pick_list_2.yaml` for `test2.world` and 75% of items from `pick_list_3.yaml` in `test3.world`.
-9. Congratulations!  Your Done!
+For world1, all objects are correctly classified i.e 3/3 with 100% accuracy.
 
-# Extra Challenges: Complete the Pick & Place
-7. To create a collision map, publish a point cloud to the `/pr2/3d_map/points` topic and make sure you change the `point_cloud_topic` to `/pr2/3d_map/points` in `sensors.yaml` in the `/pr2_robot/config/` directory. This topic is read by Moveit!, which uses this point cloud input to generate a collision map, allowing the robot to plan its trajectory.  Keep in mind that later when you go to pick up an object, you must first remove it from this point cloud so it is removed from the collision map!
-8. Rotate the robot to generate collision map of table sides. This can be accomplished by publishing joint angle value(in radians) to `/pr2/world_joint_controller/command`
-9. Rotate the robot back to its original state.
-10. Create a ROS Client for the “pick_place_routine” rosservice.  In the required steps above, you already created the messages you need to use this service. Checkout the [PickPlace.srv](https://github.com/udacity/RoboND-Perception-Project/tree/master/pr2_robot/srv) file to find out what arguments you must pass to this service.
-11. If everything was done correctly, when you pass the appropriate messages to the `pick_place_routine` service, the selected arm will perform pick and place operation and display trajectory in the RViz window
-12. Place all the objects from your pick list in their respective dropoff box and you have completed the challenge!
-13. Looking for a bigger challenge?  Load up the `challenge.world` scenario and see if you can get your perception pipeline working there!
+![alt text][image14]
 
-For all the step-by-step details on how to complete this project see the [RoboND 3D Perception Project Lesson](https://classroom.udacity.com/nanodegrees/nd209/parts/586e8e81-fc68-4f71-9cab-98ccd4766cfe/modules/e5bfcfbd-3f7d-43fe-8248-0c65d910345a/lessons/e3e5fd8e-2f76-4169-a5bc-5a128d380155/concepts/802deabb-7dbb-46be-bf21-6cb0a39a1961)
-Note: The robot is a bit moody at times and might leave objects on the table or fling them across the room :D
-As long as your pipeline performs succesful recognition, your project will be considered successful even if the robot feels otherwise!
+### Pick and Place Setup
+
+Now for picking and placing up the objects, a proper ROS message format is needed which looks like this:
+
+test_scene_num    std_msgs/Int32
+
+object_name       std_msgs/String
+
+arm_name          std_msgs/String
+
+pick_pose         geometry_msgs/Pose
+
+place_pose        geometry_msgs/Pose
+
+Therefore we iterate in our detected object list, see if the object exists in the given pick list (object_name message), we compute the centroid of the object which makes the pick_pose message. We also extract the object group from the dropbox parameter, i.e. green or red and associate right and left hands respectively hence making up arm_name message. Next we use the object group to decide the dropbox, i.e. right or left. The dropbox position makes the place_pose message. The test_scene_num message depends on world used. We do this for all the detected objects and make a dictionary list of messages using the function make_yaml_dict() in the project_template.py. And lastly we create the output*.yaml files using send_to_yaml() function. The output*.yaml files exist in the /pr2_robot.scripts folder.
+
+Please see the pr2_mover() function in the /pr2_robot/project_template.py.
+
+And a last screenshot of PR2 picking up the smaller soap.
+
+![alt text][image14]
+
+The project can be extended in various ways such as: 
+
+Complex object recognition i.e. bringing in more objects, gathering features other than color or surface normals. 
+
+Trying out different classifiers such as Covnets instead of SVM. 
+
+Tuning the pick and place cycle such that the dropped objects do not land on eachother. 
+
+This pipeline would cause the robot arm to hit some of the objects in its way to pick up the desired object, therefore proper collision avoidance is also required.
+
